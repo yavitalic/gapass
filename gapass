@@ -1,0 +1,175 @@
+#!/usr/bin/env python3
+
+import os
+import sys
+import hmac
+import time
+import getopt
+import signal
+import struct
+import base64
+import hashlib
+import pexpect
+import configparser
+
+
+def get_hotp_token(secret, intervals_no):
+    key = base64.b32decode(secret, True)
+    msg = struct.pack(">Q", intervals_no)
+    h = hmac.new(key, msg, hashlib.sha1).digest()
+    o = ord(chr(h[19])) & 15
+    h = (struct.unpack(">I", h[o:o+4])[0] & 0x7fffffff) % 1000000
+    return h
+
+
+def get_totp_token(secret):
+    return get_hotp_token(secret, intervals_no=int(time.time())//30)
+
+
+class GAPASS:
+    def __init__(self):
+        self.code_prompt = 'Verification code:'
+        self.pass_prompt = 'AD Password:'
+        self.intr_prompt = ['\$', '\#']
+
+        self.secret = None
+        self.password = None
+
+        self.decode = False
+
+        self.verbose = False
+
+        self.timeout = 30
+
+        self.command = []
+
+    def _gapass(self):
+        expect_list = [pexpect.EOF, pexpect.TIMEOUT, self.code_prompt, self.pass_prompt]
+        expect_list.extend(self.intr_prompt)
+
+        child = pexpect.spawn(' '.join(self.command), timeout=self.timeout)
+
+        child.setwinsize(os.get_terminal_size(0).lines, os.get_terminal_size(0).columns)
+
+        def sigwinch_passthrough(sig, data):
+            child.setwinsize(os.get_terminal_size(0).lines, os.get_terminal_size(0).columns)
+
+        signal.signal(signal.SIGWINCH, sigwinch_passthrough)
+
+        if self.verbose:
+            child.logfile = sys.stdout.buffer
+
+        while True:
+            index = child.expect(expect_list, timeout=self.timeout)
+
+            if index == 0: # pexpect.EOF
+                print('{}'.format(child.before.decode("utf-8")), end='')
+                child.close()
+                break
+            elif index == 1: # pexpect.TIMEOUT
+                child.interact()
+                break
+            elif index == 2: # CODE PROMPT
+                if self.secret:
+                    child.sendline(str(get_totp_token(self.secret)))
+                    continue;
+            elif index == 3: # PASSWORD PROMPT
+                child.logfile = None
+                if self.password:
+                    child.sendline(self.password)
+                    continue;
+
+            # INTERACT
+            print('{}{}'.format(child.before.decode("utf-8"), child.after.decode("utf-8")), end='')
+            child.interact()
+
+
+    def _usage(self):
+        print("Usage: {} [options] <command> <parameters>".format(os.path.basename(sys.argv[0])))
+        print("    -d, --decode                     decode secret key and password from base64")
+        print("    -e, --env                        secret key and password is passed as env var GA_KEY and AD_PASS")
+        print("    -f, --file=FILENAME              take secret key, password and prompt from INI file (~/.gapass by default)")
+        print("    -s, --secret=SECRET              provide secret key as argument (security unwise)")
+        print("    -p, --password=PASSWORD          provide password as argument (security unwise)")
+        print("    -C, --code-prompt=PROMPT         which string should search for to detect a verification code prompt")
+        print("    -P, --password-prompt=PROMPT     which string should search for to detect a password prompt")
+        print("    -I, --interactive-prompt=PROMPT  which string should search for to detect a interactive prompt")
+        print("    -h                               show help")
+        print("    -v                               verbose messages")
+
+
+    def _parse_config(self, config_file):
+        config = configparser.ConfigParser()
+        config.read(config_file)
+        sections = config.sections()
+        if sections:
+            self.secret      = config.get(sections[0], 'secret',      fallback=self.secret)
+            self.password    = config.get(sections[0], 'password',    fallback=self.password)
+            self.code_prompt = config.get(sections[0], 'code_prompt', fallback=self.code_prompt)
+            self.pass_prompt = config.get(sections[0], 'pass_prompt', fallback=self.pass_prompt)
+
+
+    def _parse_options(self):
+        shortopt ="hrdef:s:p:C:P:I:v"
+        longopt = ["help", "decode", "env", "file=", "secret=", "password=", "code-prompt=", "password-prompt=", "interactive-prompt="]
+
+        try:
+            opts, args = getopt.getopt(sys.argv[1:], shortopt, longopt)
+        except getopt.GetoptError as err:
+            print(err)
+            self._usage()
+            sys.exit(2)
+
+        self.command = args
+
+        for o, a in opts:
+            if o == "-v":
+                self.verbose = True
+            elif o in ("-h", "--help"):
+                self._usage()
+                sys.exit()
+            elif o in ("-d", "--decode"):
+                self.decode = True
+            elif o in ("-e", "--env"):
+                self.secret = os.environ.get('GA_KEY')
+                self.password = os.environ.get('AD_PASS')
+            elif o in ("-f", "--file"):
+                self._parse_config(a)
+            elif o in ("-s", "--secret"):
+                self.secret = a
+            elif o in ("-p", "--password"):
+                self.password = a
+            elif o in ("-C", "--code-prompt"):
+                self.code_prompt = a
+            elif o in ("-P", "--password-prompt"):
+                self.pass_prompt = a
+            elif o in ("-I", "--interactive-prompt"):
+                self.intr_prompt.append(a)
+            else:
+                assert False, "unhandled option"
+
+
+    def _decode(self):
+        if self.secret and self.decode:
+            self.secret = base64.b64decode(self.secret).decode("utf-8")
+        if self.password and self.decode:
+            self.password = base64.b64decode(self.password).decode("utf-8")
+
+
+    def execute(self):
+        self._parse_config(os.path.join(os.path.expanduser("~"), '.gapass'))
+        self._parse_options()
+        self._decode()
+
+        if len(self.command) > 0:
+            self._gapass()
+        else:
+            self._usage()
+
+
+if __name__ == "__main__":
+    try:
+        gapass = GAPASS()
+        gapass.execute()
+    except KeyboardInterrupt:
+        print("")
