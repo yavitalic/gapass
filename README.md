@@ -36,12 +36,13 @@ $ gapass --help
 Usage: gapass [options] <command> <parameters>
     -d, --decode                     decode secret key and password from base64
     -e, --env                        secret key and password is passed as env var GA_KEY and AD_PASS
-    -f, --file=FILENAME              take secret key, password and prompt from INI file (~/.gapass by default)
+    -f, --file=FILENAME              take secret key, password and prompt from INI file (~/.gapass)
     -s, --secret=SECRET              provide secret key as argument (security unwise)
     -p, --password=PASSWORD          provide password as argument (security unwise)
-    -C, --code-prompt=PROMPT         which string should search for to detect a verification code prompt
-    -P, --password-prompt=PROMPT     which string should search for to detect a password prompt
-    -I, --interactive-prompt=PROMPT  which string should search for to detect a interactive prompt
+    -C, --code-prompt=PROMPT         which string should search for to detect a verification code prompt ('Verification code:')
+    -P, --password-prompt=PROMPT     which string should search for to detect a password prompt ('AD Password:')
+    -Q, --query-prompt=PROMPT        which string should search for to detect a user query prompt ('?')
+    -I, --interactive-prompt=PROMPT  which string should search for to detect a interactive prompt ('$' or '#')
     -h                               show help
     -v                               verbose messages
 ```
